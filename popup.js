@@ -1,186 +1,353 @@
 // Make applicants array global
 let applicants = [];
 
+// Add a global flag to control fetching
+let stopFetchingFlag = false;
+
+// Utility function to check for chrome.storage.local availability
+function isChromeStorageLocalAvailable() {
+    try {
+        return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Utility function to save applicants to chrome local storage
+function saveApplicantsToStorage(applicantsArr) {
+    if (isChromeStorageLocalAvailable()) {
+        chrome.storage.local.set({ applicants: applicantsArr }, function() {
+            // Optionally, you can log or show a message here
+            // console.log('Applicants data saved to local storage.');
+        });
+    } else {
+        // Fallback: Save to localStorage if chrome.storage.local is not available
+        try {
+            localStorage.setItem('applicants', JSON.stringify(applicantsArr));
+        } catch (e) {
+            console.error('Unable to save applicants data:', e);
+        }
+    }
+}
+
+// Utility function to load applicants from chrome local storage
+function loadApplicantsFromStorage(callback) {
+    if (isChromeStorageLocalAvailable()) {
+        chrome.storage.local.get(['applicants'], function(result) {
+            callback(result.applicants || []);
+        });
+    } else {
+        // Fallback: Load from localStorage if chrome.storage.local is not available
+        try {
+            const data = localStorage.getItem('applicants');
+            callback(data ? JSON.parse(data) : []);
+        } catch (e) {
+            console.error('Unable to load applicants data:', e);
+            callback([]);
+        }
+    }
+}
+
+// The main fix: Move showStatus call inside the callback for chrome.storage.local.remove
+function clearApplicantsFromStorage() {
+    if (isChromeStorageLocalAvailable()) {
+        chrome.storage.local.remove(['applicants'], function() {
+            // Only show status after removal is complete and DOM is ready
+            // Use setTimeout to ensure DOM is ready if needed
+            setTimeout(() => {
+                // Try to get the statusDiv in case called before DOMContentLoaded
+                const statusDiv = document.getElementById('status');
+                if (typeof showStatus === "function") {
+                    showStatus('Applicants data cleared from local storage.', 'success');
+                } else if (statusDiv) {
+                    statusDiv.textContent = 'Applicants data cleared from local storage.';
+                    statusDiv.className = 'status-message success';
+                    statusDiv.style.display = 'block';
+                    setTimeout(() => {
+                        statusDiv.style.display = 'none';
+                    }, 3000);
+                }
+            }, 0);
+        });
+        // Remove this line: showStatus('Applicants data cleared from local storage.', 'success');
+    } else {
+        // Fallback: Remove from localStorage if chrome.storage.local is not available
+        try {
+            localStorage.removeItem('applicants');
+            // Try to get the statusDiv in case called before DOMContentLoaded
+            const statusDiv = document.getElementById('status');
+            if (typeof showStatus === "function") {
+                showStatus('Applicants data cleared from local storage.', 'success');
+            } else if (statusDiv) {
+                statusDiv.textContent = 'Applicants data cleared from local storage.';
+                statusDiv.className = 'status-message success';
+                statusDiv.style.display = 'block';
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 3000);
+            }
+        } catch (e) {
+            console.error('Unable to clear applicants data:', e);
+            if (typeof showStatus === "function") {
+                showStatus('Error clearing applicants data.', 'error');
+            }
+        }
+    }
+}
+
+// Function to stop fetching
+function stopFetching() {
+    stopFetchingFlag = true;
+    showStatus('Stopping applicant extraction...', 'warning');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const myJobsBtn = document.getElementById('myJobsBtn');
     const fetchApplicantsBtn = document.getElementById('fetchApplicantsBtn');
+    const clearApplicantsBtn = document.getElementById('clearApplicantsBtn');
+    const downloadResumesBtn = document.getElementById('downloadResumesBtn');
     const statusDiv = document.getElementById('status');
     const applicantsDataDiv = document.getElementById('applicantsData');
+    const stopFetchBtn = document.getElementById('stopFetchBtn');
 
-    // My Jobs button - redirect to LinkedIn hiring jobs
-    myJobsBtn.addEventListener('click', function() {
-        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-            chrome.tabs.update(tabs[0].id, {
-                url: 'https://www.linkedin.com/my-items/posted-jobs/'
-            });
-            showStatus('Redirecting to My Jobs...', 'success');
-            window.close();
-        });
+    // On load, show any previously saved applicants
+    loadApplicantsFromStorage(function(storedApplicants) {
+        applicants = storedApplicants;
+        displayApplicants(applicants);
     });
 
-    // Fetch Applicants button - extract applicant data from current page and all pagination pages
-    fetchApplicantsBtn.addEventListener('click', function() {
-        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-            const currentTab = tabs[0];
+    // My Jobs button - redirect to LinkedIn hiring jobs
+    if (myJobsBtn) {
+        myJobsBtn.addEventListener('click', function() {
+            if (typeof chrome !== "undefined" && chrome.tabs) {
+                chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+                    chrome.tabs.update(tabs[0].id, {
+                        url: 'https://www.linkedin.com/my-items/posted-jobs/'
+                    });
+                    showStatus('Redirecting to My Jobs...', 'success');
+                    window.close();
+                });
+            } else {
+                window.open('https://www.linkedin.com/my-items/posted-jobs/', '_blank');
+                showStatus('Redirecting to My Jobs...', 'success');
+            }
+        });
+    }
 
-            // Check if we're on a LinkedIn page
-            if (!currentTab.url.includes('linkedin.com')) {
-                showStatus('Please navigate to LinkedIn first', 'error');
+    if (clearApplicantsBtn) {
+        clearApplicantsBtn.addEventListener('click', function() {
+            clearApplicantsFromStorage();
+        });
+    }
+
+    if (downloadResumesBtn) {
+        downloadResumesBtn.addEventListener('click', function() {
+            downloadResumes();
+        });
+    }
+
+    if (stopFetchBtn) {
+        stopFetchBtn.addEventListener('click', function() {
+            stopFetching();
+        });
+    }
+
+    // Fetch Applicants button - extract applicant data from current page and all pagination pages
+    if (fetchApplicantsBtn) {
+        fetchApplicantsBtn.addEventListener('click', function() {
+            if (typeof chrome === "undefined" || !chrome.tabs || !chrome.scripting) {
+                showStatus('This feature requires Chrome extension APIs.', 'error');
                 return;
             }
+            chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+                const currentTab = tabs[0];
 
-            showStatus('Starting applicant extraction...', 'success');
-            applicants = []; // Reset global applicants array
+                // Check if we're on a LinkedIn page
+                if (!currentTab.url.includes('linkedin.com')) {
+                    showStatus('Please navigate to LinkedIn first', 'error');
+                    return;
+                }
 
-            // Main function to iterate through all pages and extract applicants
-            (async function extractFromAllPages() {
-                // Get pagination buttons to determine how many pages to iterate through
-                const totalPages = await new Promise((resolve) => {
-                    chrome.scripting.executeScript({
-                        target: {tabId: currentTab.id},
-                        func: function() {
-                            // Use the correct selector for pagination buttons
-                            const buttons = Array.from(
-                                document.querySelectorAll('ul.artdeco-pagination__pages button[aria-label^="Page"]')
-                            ).filter(btn => btn.innerText.trim() !== '…');
-                            return buttons.length;
-                        }
-                    }, function(results) {
-                        if (results && results[0] && typeof results[0].result === 'number') {
-                            resolve(results[0].result > 0 ? results[0].result : 1);
-                        } else {
-                            resolve(1);
-                        }
-                    });
-                });
+                showStatus('Starting applicant extraction...', 'success');
+                applicants = []; // Reset global applicants array
+                saveApplicantsToStorage(applicants); // Clear storage at start
 
-                showStatus(`Found ${totalPages} page(s) to process...`, 'success');
+                // Reset stop flag at the start of extraction
+                stopFetchingFlag = false;
 
-                // Process each page sequentially
-                for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-                    showStatus(`Processing page ${pageIndex + 1} of ${totalPages}...`, 'success');
-
-                    // If not the first page, click the pagination button and wait for page to load
-                    if (pageIndex > 0) {
-                        await new Promise((resolve) => {
-                            chrome.scripting.executeScript({
-                                target: {tabId: currentTab.id},
-                                func: function(pageIdx) {
-                                    const buttons = Array.from(
-                                        document.querySelectorAll('ul.artdeco-pagination__pages button[aria-label^="Page"]')
-                                    ).filter(btn => btn.innerText.trim() !== '…');
-                                    if (buttons[pageIdx]) {
-                                        buttons[pageIdx].click();
-                                    }
-                                },
-                                args: [pageIndex]
-                            }, () => {
-                                setTimeout(resolve, 2000); // Wait for page to load
-                            });
-                        });
-                    }
-
-                    // Extract applicants from current page
-                    const pageApplicants = await new Promise((resolve) => {
+                // Main function to iterate through all pages and extract applicants
+                (async function extractFromAllPages() {
+                    // Get pagination buttons to determine how many pages to iterate through
+                    const totalPages = await new Promise((resolve) => {
                         chrome.scripting.executeScript({
                             target: {tabId: currentTab.id},
                             func: function() {
-                                const applicants = [];
-                                const applicantElements = document.querySelectorAll('div[class="hiring-applicants__list-container"] ul li[data-view-name="job-applicant-list-profile-card"]');
-                                applicantElements.forEach((element, idx) => {
-                                    const applicant = {};
-                                    const linkElement = element.querySelector('a');
-                                    if (linkElement) {
-                                        applicant.profileLink = linkElement.href;
-                                        const nameElement = linkElement.querySelector('.artdeco-entity-lockup__title.hiring-people-card__title');
-                                        if (nameElement) {
-                                            applicant.name = nameElement.textContent.trim();
-                                        } else {
-                                            applicant.name = 'Unknown';
-                                        }
-                                        // Create a unique selector for the linkElement
-                                        applicant.linkSelector = `div.hiring-applicants__list-container ul li[data-view-name="job-applicant-list-profile-card"]:nth-child(${idx + 1}) a`;
-                                    }
-                                    if (applicant.profileLink) {
-                                        applicants.push(applicant);
-                                    }
-                                });
-                                return applicants;
+                                // Use the correct selector for pagination buttons
+                                const buttons = Array.from(
+                                    document.querySelectorAll('ul.artdeco-pagination__pages button[aria-label^="Page"]')
+                                ).filter(btn => btn.innerText.trim() !== '…');
+                                return buttons.length;
                             }
                         }, function(results) {
-                            if (results && results[0] && results[0].result) {
-                                resolve(results[0].result);
+                            if (results && results[0] && typeof results[0].result === 'number') {
+                                resolve(results[0].result > 0 ? results[0].result : 1);
                             } else {
-                                resolve([]);
+                                resolve(1);
                             }
                         });
                     });
 
-                    // Iterate over each applicant on this page, one by one, and fetch their resume link
-                    for (let i = 0; i < pageApplicants.length; i++) {
-                        // Click the linkElement to open the profile section
-                        await new Promise((resolveClick) => {
-                            chrome.scripting.executeScript({
-                                target: {tabId: currentTab.id},
-                                func: function(selector) {
-                                    const el = document.querySelector(selector);
-                                    if (el) el.click();
-                                },
-                                args: [pageApplicants[i].linkSelector]
-                            }, () => {
-                                // Wait for the profile section to load after click
-                                setTimeout(resolveClick, 2000);
-                            });
-                        });
+                    showStatus(`Found ${totalPages} page(s) to process...`, 'success');
 
-                        // Extract the resume link from the opened profile section
-                        const resumeLink = await new Promise((resolve) => {
+                    // Process each page sequentially
+                    for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+                        if (stopFetchingFlag) {
+                            showStatus('Applicant extraction stopped by user.', 'warning');
+                            break;
+                        }
+
+                        showStatus(`Processing page ${pageIndex + 1} of ${totalPages}...`, 'success');
+
+                        // If not the first page, click the pagination button and wait for page to load
+                        if (pageIndex > 0) {
+                            await new Promise((resolve) => {
+                                chrome.scripting.executeScript({
+                                    target: {tabId: currentTab.id},
+                                    func: function(pageIdx) {
+                                        const buttons = Array.from(
+                                            document.querySelectorAll('ul.artdeco-pagination__pages button[aria-label^="Page"]')
+                                        ).filter(btn => btn.innerText.trim() !== '…');
+                                        if (buttons[pageIdx]) {
+                                            buttons[pageIdx].click();
+                                        }
+                                    },
+                                    args: [pageIndex]
+                                }, () => {
+                                    setTimeout(resolve, 2000); // Wait for page to load
+                                });
+                            });
+                        }
+
+                        // Extract applicants from current page
+                        const pageApplicants = await new Promise((resolve) => {
                             chrome.scripting.executeScript({
                                 target: {tabId: currentTab.id},
                                 func: function() {
-                                    // Try both selectors for resume download
-                                    let resumeDownloadLink = document.querySelector('div.ui-attachment.ui-attachment--doc a.ui-attachment__download-button')?.href;
-                                    if (!resumeDownloadLink) {
-                                        // Try alternate selector
-                                        resumeDownloadLink = document.querySelector('div[class="hiring-resume-viewer__resume-wrapper--collapsed"] a')?.href;
-                                    }
-                                    // Try the "Resume" section in the right column as a fallback
-                                    if (!resumeDownloadLink) {
-                                        const resumeDiv = Array.from(
-                                            document.querySelectorAll('main[class="hiring-applicants__right-column"] div')
-                                        ).find(div =>
-                                            div.querySelector('h2')?.innerText.trim() === 'Resume' &&
-                                            div.querySelector('a[href]')
-                                        );
-                                        resumeDownloadLink = resumeDiv?.querySelector('a')?.href;
-                                    }
-                                    return resumeDownloadLink || null;
+                                    const applicants = [];
+                                    const applicantElements = document.querySelectorAll('div[class="hiring-applicants__list-container"] ul li[data-view-name="job-applicant-list-profile-card"]');
+                                    applicantElements.forEach((element, idx) => {
+                                        const applicant = {};
+                                        const linkElement = element.querySelector('a');
+                                        if (linkElement) {
+                                            applicant.profileLink = linkElement.href;
+                                            const nameElement = linkElement.querySelector('.artdeco-entity-lockup__title.hiring-people-card__title');
+                                            if (nameElement) {
+                                                applicant.name = nameElement.textContent.trim();
+                                            } else {
+                                                applicant.name = 'Unknown';
+                                            }
+                                            // Create a unique selector for the linkElement
+                                            applicant.linkSelector = `div.hiring-applicants__list-container ul li[data-view-name="job-applicant-list-profile-card"]:nth-child(${idx + 1}) a`;
+                                        }
+                                        if (applicant.profileLink) {
+                                            applicants.push(applicant);
+                                        }
+                                    });
+                                    return applicants;
                                 }
                             }, function(results) {
                                 if (results && results[0] && results[0].result) {
                                     resolve(results[0].result);
                                 } else {
-                                    resolve(null);
+                                    resolve([]);
                                 }
                             });
                         });
 
-                        pageApplicants[i].resumeLink = resumeLink;
-                        // Optionally update UI after each applicant
-                        displayApplicants(applicants.concat(pageApplicants.slice(0, i + 1)));
+                        // Iterate over each applicant on this page, one by one, and fetch their resume link
+                        for (let i = 0; i < pageApplicants.length; i++) {
+                            if (stopFetchingFlag) {
+                                showStatus('Applicant extraction stopped by user.', 'warning');
+                                break;
+                            }
+                            // Click the linkElement to open the profile section
+                            await new Promise((resolveClick) => {
+                                chrome.scripting.executeScript({
+                                    target: {tabId: currentTab.id},
+                                    func: function(selector) {
+                                        const el = document.querySelector(selector);
+                                        if (el) el.click();
+                                    },
+                                    args: [pageApplicants[i].linkSelector]
+                                }, () => {
+                                    // Wait for the profile section to load after click
+                                    setTimeout(resolveClick, 2000);
+                                });
+                            });
+
+                            // Extract the resume link from the opened profile section
+                            const resumeLink = await new Promise((resolve) => {
+                                chrome.scripting.executeScript({
+                                    target: {tabId: currentTab.id},
+                                    func: function() {
+                                        // Try both selectors for resume download
+                                        let resumeDownloadLink = document.querySelector('div.ui-attachment.ui-attachment--doc a.ui-attachment__download-button')?.href;
+                                        if (!resumeDownloadLink) {
+                                            // Try alternate selector
+                                            resumeDownloadLink = document.querySelector('div[class="hiring-resume-viewer__resume-wrapper--collapsed"] a')?.href;
+                                        }
+                                        // Try the "Resume" section in the right column as a fallback
+                                        if (!resumeDownloadLink) {
+                                            const resumeDiv = Array.from(
+                                                document.querySelectorAll('main[class="hiring-applicants__right-column"] div')
+                                            ).find(div =>
+                                                div.querySelector('h2')?.innerText.trim() === 'Resume' &&
+                                                div.querySelector('a[href]')
+                                            );
+                                            resumeDownloadLink = resumeDiv?.querySelector('a')?.href;
+                                        }
+                                        return resumeDownloadLink || null;
+                                    }
+                                }, function(results) {
+                                    if (results && results[0] && results[0].result) {
+                                        resolve(results[0].result);
+                                    } else {
+                                        resolve(null);
+                                    }
+                                });
+                            });
+
+                            pageApplicants[i].resumeLink = resumeLink;
+                            // Optionally update UI after each applicant
+                            displayApplicants(applicants.concat(pageApplicants.slice(0, i + 1)));
+                            // Save progress to storage after each applicant
+                            saveApplicantsToStorage(applicants.concat(pageApplicants.slice(0, i + 1)));
+                        }
+
+                        // Add page applicants to global applicants array
+                        applicants = applicants.concat(pageApplicants);
+                        displayApplicants(applicants); // Update UI with all applicants so far
+                        saveApplicantsToStorage(applicants); // Save to storage after each page
+
+                        // If stopped during applicant loop, break out of page loop as well
+                        if (stopFetchingFlag) {
+                            break;
+                        }
                     }
 
-                    // Add page applicants to global applicants array
-                    applicants = applicants.concat(pageApplicants);
-                    displayApplicants(applicants); // Update UI with all applicants so far
-                }
-
-                showStatus(`Completed! Found ${applicants.length} total applicants across ${totalPages} page(s)`, 'success');
-            })();
+                    if (stopFetchingFlag) {
+                        showStatus(`Stopped. Found ${applicants.length} applicants so far.`, 'warning');
+                    } else {
+                        showStatus(`Completed! Found ${applicants.length} total applicants across ${totalPages} page(s)`, 'success');
+                    }
+                    saveApplicantsToStorage(applicants); // Final save
+                })();
+            });
         });
-    });
+    }
 
     function showStatus(message, type) {
+        if (!statusDiv) return;
         statusDiv.textContent = message;
         statusDiv.className = `status-message ${type}`;
         statusDiv.style.display = 'block';
@@ -190,6 +357,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function displayApplicants(applicantsList) {
+        if (!applicantsDataDiv) return;
         applicantsDataDiv.innerHTML = '';
         
         if (applicantsList.length === 0) {
@@ -246,4 +414,29 @@ function extractResumeLinkFromProfile() {
         resumeDownloadLink = document.querySelector('div[class="hiring-resume-viewer__resume-wrapper--collapsed"] a')?.href;
     }
     return resumeDownloadLink || null;
+}
+
+function downloadResumes() {
+    // Use the global applicants array if available, otherwise load from storage
+    function triggerDownload(applicantsList) {
+        applicantsList.forEach(applicant => {
+            const resumeLink = applicant.resumeLink;
+            if (resumeLink) {
+                const a = document.createElement('a');
+                a.href = resumeLink;
+                a.download = `${applicant.name}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+        });
+    }
+
+    if (applicants && applicants.length > 0) {
+        triggerDownload(applicants);
+    } else {
+        loadApplicantsFromStorage(function(storedApplicants) {
+            triggerDownload(storedApplicants);
+        });
+    }
 }
