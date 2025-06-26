@@ -92,7 +92,10 @@ function clearApplicantsFromStorage() {
 // Function to stop fetching
 function stopFetching() {
     stopFetchingFlag = true;
-    showStatus('Stopping applicant extraction...', 'warning');
+    // Use globalShowStatus to avoid ReferenceError if showStatus is not defined
+    if (typeof globalShowStatus === "function") {
+        globalShowStatus('Stopping applicant extraction...', 'warning');
+    }
 }
 
 // Function to extract qualification status (to be injected)
@@ -132,6 +135,34 @@ function extractQualificationStatus() {
     return result;
 }
 
+// ---- JSZip integration ----
+// JSZip is now included as a local script in popup.html
+/**
+ * Loads JSZip from the global window object.
+ * Returns a Promise that resolves to the JSZip constructor.
+ */
+function loadJSZip() {
+    return new Promise((resolve, reject) => {
+        if (typeof JSZip !== 'undefined') {
+            resolve(JSZip);
+        } else {
+            reject(new Error('JSZip is not available. Please ensure JSZip is included as a local script in popup.html.'));
+        }
+    });
+}
+
+// Define a global showStatus function to avoid ReferenceError
+function globalShowStatus(message, type) {
+    const statusDiv = document.getElementById('status');
+    if (!statusDiv) return;
+    statusDiv.textContent = message;
+    statusDiv.className = `status-message ${type}`;
+    statusDiv.style.display = 'block';
+    setTimeout(() => {
+        statusDiv.style.display = 'none';
+    }, 3000);
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const myJobsBtn = document.getElementById('myJobsBtn');
     const fetchApplicantsBtn = document.getElementById('fetchApplicantsBtn');
@@ -155,12 +186,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     chrome.tabs.update(tabs[0].id, {
                         url: 'https://www.linkedin.com/my-items/posted-jobs/'
                     });
-                    showStatus('Redirecting to My Jobs...', 'success');
+                    globalShowStatus('Redirecting to My Jobs...', 'success');
                     window.close();
                 });
             } else {
                 window.open('https://www.linkedin.com/my-items/posted-jobs/', '_blank');
-                showStatus('Redirecting to My Jobs...', 'success');
+                globalShowStatus('Redirecting to My Jobs...', 'success');
             }
         });
     }
@@ -187,7 +218,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (fetchApplicantsBtn) {
         fetchApplicantsBtn.addEventListener('click', function() {
             if (typeof chrome === "undefined" || !chrome.tabs || !chrome.scripting) {
-                showStatus('This feature requires Chrome extension APIs.', 'error');
+                globalShowStatus('This feature requires Chrome extension APIs.', 'error');
                 return;
             }
             chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
@@ -195,11 +226,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Check if we're on a LinkedIn page
                 if (!currentTab.url.includes('linkedin.com')) {
-                    showStatus('Please navigate to LinkedIn first', 'error');
+                    globalShowStatus('Please navigate to LinkedIn first', 'error');
                     return;
                 }
 
-                showStatus('Starting applicant extraction...', 'success');
+                globalShowStatus('Starting applicant extraction...', 'success');
                 applicants = []; // Reset global applicants array
                 saveApplicantsToStorage(applicants); // Clear storage at start
 
@@ -228,16 +259,16 @@ document.addEventListener('DOMContentLoaded', function() {
                         });
                     });
 
-                    showStatus(`Found ${totalPages} page(s) to process...`, 'success');
+                    globalShowStatus(`Found ${totalPages} page(s) to process...`, 'success');
 
                     // Process each page sequentially
                     for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
                         if (stopFetchingFlag) {
-                            showStatus('Applicant extraction stopped by user.', 'warning');
+                            globalShowStatus('Applicant extraction stopped by user.', 'warning');
                             break;
                         }
 
-                        showStatus(`Processing page ${pageIndex + 1} of ${totalPages}...`, 'success');
+                        globalShowStatus(`Processing page ${pageIndex + 1} of ${totalPages}...`, 'success');
 
                         // If not the first page, click the pagination button and wait for page to load
                         if (pageIndex > 0) {
@@ -300,7 +331,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         let filteredPageApplicants = [];
                         for (let i = 0; i < pageApplicants.length; i++) {
                             if (stopFetchingFlag) {
-                                showStatus('Applicant extraction stopped by user.', 'warning');
+                                globalShowStatus('Applicant extraction stopped by user.', 'warning');
                                 break;
                             }
 
@@ -370,7 +401,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 saveApplicantsToStorage(applicants.concat(filteredPageApplicants));
                             } else {
                                 // Skip this applicant and do not add to filteredPageApplicants
-                                showStatus(`Skipped ${pageApplicants[i].name || 'Unknown'} (did not match qualifications)`, 'warning');
+                                globalShowStatus(`Skipped ${pageApplicants[i].name || 'Unknown'} (did not match qualifications)`, 'warning');
                             }
                         }
 
@@ -386,9 +417,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
 
                     if (stopFetchingFlag) {
-                        showStatus(`Stopped. Found ${applicants.length} applicants so far.`, 'warning');
+                        globalShowStatus(`Stopped. Found ${applicants.length} applicants so far.`, 'warning');
                     } else {
-                        showStatus(`Completed! Found ${applicants.length} total applicants across ${totalPages} page(s)`, 'success');
+                        globalShowStatus(`Completed! Found ${applicants.length} total applicants across ${totalPages} page(s)`, 'success');
                     }
                     saveApplicantsToStorage(applicants); // Final save
                 })();
@@ -396,14 +427,9 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Redefine showStatus as a wrapper for globalShowStatus for compatibility
     function showStatus(message, type) {
-        if (!statusDiv) return;
-        statusDiv.textContent = message;
-        statusDiv.className = `status-message ${type}`;
-        statusDiv.style.display = 'block';
-        setTimeout(() => {
-            statusDiv.style.display = 'none';
-        }, 3000);
+        globalShowStatus(message, type);
     }
 
     function displayApplicants(applicantsList) {
@@ -466,18 +492,79 @@ function extractResumeLinkFromProfile() {
     return resumeDownloadLink || null;
 }
 
+// Download all resumes as a zip file
 function downloadResumes() {
-    // Use the global applicants array if available, otherwise load from storage
+    // Helper to sanitize file names
+    function sanitizeFileName(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '_').replace(/\s+/g, '_');
+    }
+
+    // Helper to fetch a file as blob
+    function fetchResumeBlob(url) {
+        return fetch(url)
+            .then(response => {
+                if (!response.ok) throw new Error('Failed to fetch resume');
+                return response.blob();
+            });
+    }
+
+    // Main trigger function
     function triggerDownload(applicantsList) {
-        applicantsList.forEach(applicant => {
-            const resumeLink = applicant.resumeLink;
-            if (resumeLink) {
-                const a = document.createElement('a');
-                a.href = resumeLink;
-                a.download = `${applicant.name}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
+        // Filter applicants with resume links
+        const applicantsWithResumes = applicantsList.filter(applicant => applicant.resumeLink);
+
+        if (applicantsWithResumes.length === 0) {
+            globalShowStatus('No resumes to download.', 'warning');
+            return;
+        }
+
+        globalShowStatus('Preparing resumes zip...', 'success');
+
+        loadJSZip().then(JSZip => {
+            const zip = new JSZip();
+            let completed = 0;
+            let failed = 0;
+
+            // For progress feedback
+            function updateProgress() {
+                globalShowStatus(`Downloading resumes: ${completed + failed}/${applicantsWithResumes.length}`, 'success');
+            }
+
+            // Fetch all resumes as blobs and add to zip
+            const fetchPromises = applicantsWithResumes.map(applicant => {
+                const fileName = sanitizeFileName(applicant.name || 'Unknown') + '.pdf';
+                return fetchResumeBlob(applicant.resumeLink)
+                    .then(blob => {
+                        zip.file(fileName, blob);
+                        completed++;
+                        updateProgress();
+                    })
+                    .catch(err => {
+                        failed++;
+                        updateProgress();
+                        // Optionally, add a text file for failed downloads
+                        zip.file(fileName + '.FAILED.txt', `Failed to download resume for ${applicant.name || 'Unknown'}: ${err.message}`);
+                    });
+            });
+
+            Promise.all(fetchPromises).then(() => {
+                zip.generateAsync({ type: 'blob' }).then(function(content) {
+                    // Download the zip file
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(content);
+                    a.download = 'applicants_resumes.zip';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    globalShowStatus(`Downloaded ${completed} resumes${failed ? `, ${failed} failed` : ''}.`, failed ? 'warning' : 'success');
+                });
+            });
+        }).catch(err => {
+            // More informative error message and suggestion
+            globalShowStatus('Failed to load zip library. Please ensure JSZip is included as a local script in your extension and referenced in popup.html.', 'error');
+            // Optionally, log the error for debugging
+            if (err) {
+                console.error('JSZip load error:', err);
             }
         });
     }
