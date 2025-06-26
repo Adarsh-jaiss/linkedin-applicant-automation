@@ -1,0 +1,149 @@
+list of all applicants :
+
+div[class="hiring-applicants__list-container"] ul li[data-view-name="job-applicant-list-profile-card"]
+
+data of a particular profile:
+
+div[class="hiring-applicants__list-container"] ul li[data-view-name="job-applicant-list-profile-card"] a
+
+const aTag = document.querySelector('a.hiring-applicants-list-item__link');
+const href = aTag ? aTag.href : null;
+console.log(href);
+
+
+download button:
+main[class="hiring-applicants__right-column]
+
+const resumeDiv = Array.from(
+  document.querySelectorAll('div.display-flex.justify-space-between.align-items-flex-start.pl5.pr5.pt5.pb3')
+).find(div => 
+  div.querySelector('h2')?.innerText.trim() === 'Resume' && 
+  div.querySelector('a[href]')
+);
+
+console.log(resumeDiv); // logs the matching <div>
+console.log(resumeDiv?.querySelector('a')?.href); 
+
+
+for iterate button :
+
+ul.artdeco-pagination__pages li button[aria-label^="Page"]
+
+async function clickThroughPages(delayMs = 2000) {
+  const buttons = Array.from(
+    document.querySelectorAll('ul.artdeco-pagination__pages button[aria-label^="Page"]')
+  ).filter(btn => btn.innerText.trim() !== '…'); // Skip ellipsis
+
+  for (const [i, button] of buttons.entries()) {
+    console.log(`Clicking Page ${i + 1}: ${button.innerText.trim()}`);
+    button.click();
+
+    // Wait for the content to load (adjust delay if needed)
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+}
+
+clickThroughPages();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Okay, now i need some modifications in the fetch audeince flow.
+
+1. it shoudl iterate over each profile. :
+
+and then click on each profile to open their details which has resume, and from their it should call this to get the download link of resume for each profile : 
+
+2. the way its fetching and showing data iof a user is very messy, to enchance, simply just show their name, and their data link of particular profile, their linkedin profile url and resume download url. 
+
+
+
+function extractApplicantData() {
+    
+    try {
+        // applicants list
+        const applicantElements = document.querySelectorAll('div[class="hiring-applicants__list-container"] ul li[data-view-name="job-applicant-list-profile-card"]');
+        
+        applicantElements.forEach((element) => {
+                const applicant = {};
+                
+                const linkElement = element.querySelector('a');
+                if (linkElement) {
+                    // profile link
+                    applicant.profileLink = linkElement.href;
+
+                    // name
+                    const nameElement = linkElement.querySelector('.artdeco-entity-lockup__title.hiring-people-card__title');
+                    if (nameElement) {
+                        applicant.name = nameElement.textContent.trim();
+                    } else {
+                        // fallback: in case name is not wrapped in a separate div (rare)
+                        applicant.name = 'Unknown';
+                    }
+                    console.log('applicant', applicant);
+                }
+                
+                if (applicant.profileLink) {
+                    applicants.push(applicant);
+                }
+        });
+        
+    } catch (error) {
+        console.error('Error extracting applicant data:', error);
+    }
+    
+    return applicants;
+}
+
+
+
+function extractResumeLink() {
+    applicants.forEach((applicant) => {
+        
+        const profileLink = applicant.profileLink;
+        window.open(profileLink, '_blank');
+
+        setTimeout(() => {  
+            let resumeDownloadLink = document.querySelector('div.ui-attachment.ui-attachment--doc a.ui-attachment__download-button')?.href;
+            
+            if (!resumeDownloadLink) {    
+                const resumeDiv = Array.from(
+                  document.querySelectorAll('main[class="hiring-applicants__right-column] div')
+                ).find(div => 
+                  div.querySelector('h2')?.innerText.trim() === 'Resume' && 
+                  div.querySelector('a[href]')
+                );
+                
+                resumeDownloadLink = resumeDiv?.querySelector('a')?.href;
+            }
+            
+            if (resumeDownloadLink) {
+                applicant.resumeLink = resumeDownloadLink;
+            }
+
+            console.log('resumeDownloadLink', resumeDownloadLink);
+            
+            window.close();
+        }, 5000);
+    });
+}

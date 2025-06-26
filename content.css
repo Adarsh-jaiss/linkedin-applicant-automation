@@ -1,0 +1,26 @@
+/* Content script styles for LinkedIn Hiring Assistant */
+
+#linkedin-hiring-assistant-btn {
+    position: relative;
+}
+
+#linkedin-hiring-assistant-btn .global-nav__primary-link {
+    transition: background-color 0.2s ease;
+    border-radius: 4px;
+}
+
+#linkedin-hiring-assistant-btn .global-nav__primary-link:hover {
+    background-color: rgba(10, 102, 194, 0.1);
+}
+
+#linkedin-hiring-assistant-btn .global-nav__primary-link-text {
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+/* Ensure button fits well with LinkedIn's design */
+@media (max-width: 768px) {
+    #linkedin-hiring-assistant-btn .global-nav__primary-link-text {
+        font-size: 12px;
+    }
+} 

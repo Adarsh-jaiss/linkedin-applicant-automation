@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "LinkedIn Hiring Assistant",
+  "version": "1.0",
+  "description": "Chrome extension to help manage LinkedIn hiring process",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.linkedin.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "LinkedIn Hiring Assistant"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.linkedin.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
