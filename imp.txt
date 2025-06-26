@@ -45,9 +45,23 @@ async function clickThroughPages(delayMs = 2000) {
 
 clickThroughPages();
 
+now once we fetch the current page, if we have this iterate option, use this selector and start iterating over each page and perform the applicant and resume link extracttion and then move to next page. this is the selector that was working perfectly : ul.artdeco-pagination__pages li button[aria-label^="Page"]
 
+and this was the function i used to test this selector : 
 
+async function clickThroughPages(delayMs = 2000) {
+  const buttons = Array.from(
+    document.querySelectorAll('ul.artdeco-pagination__pages button[aria-label^="Page"]')
+  ).filter(btn => btn.innerText.trim() !== '…'); // Skip ellipsis
 
+  for (const [i, button] of buttons.entries()) {
+    console.log(`Clicking Page ${i + 1}: ${button.innerText.trim()}`);
+    button.click();
+
+    // Wait for the content to load (adjust delay if needed)
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+}
 
 
 
