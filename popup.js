@@ -52,10 +52,7 @@ function loadApplicantsFromStorage(callback) {
 function clearApplicantsFromStorage() {
     if (isChromeStorageLocalAvailable()) {
         chrome.storage.local.remove(['applicants'], function() {
-            // Only show status after removal is complete and DOM is ready
-            // Use setTimeout to ensure DOM is ready if needed
             setTimeout(() => {
-                // Try to get the statusDiv in case called before DOMContentLoaded
                 const statusDiv = document.getElementById('status');
                 if (typeof showStatus === "function") {
                     showStatus('Applicants data cleared from local storage.', 'success');
@@ -69,12 +66,9 @@ function clearApplicantsFromStorage() {
                 }
             }, 0);
         });
-        // Remove this line: showStatus('Applicants data cleared from local storage.', 'success');
     } else {
-        // Fallback: Remove from localStorage if chrome.storage.local is not available
         try {
             localStorage.removeItem('applicants');
-            // Try to get the statusDiv in case called before DOMContentLoaded
             const statusDiv = document.getElementById('status');
             if (typeof showStatus === "function") {
                 showStatus('Applicants data cleared from local storage.', 'success');
@@ -99,6 +93,43 @@ function clearApplicantsFromStorage() {
 function stopFetching() {
     stopFetchingFlag = true;
     showStatus('Stopping applicant extraction...', 'warning');
+}
+
+// Function to extract qualification status (to be injected)
+function extractQualificationStatus() {
+    const result = {
+        mustHaveMatched: false,
+        preferredMatched: false,
+        anyMatched: false
+    };
+
+    try {
+        const qualificationHeaders = document.querySelectorAll(
+            'div[id^="hiring-screening-questions-"] h3.t-16.t-bold'
+        );
+
+        qualificationHeaders.forEach((header) => {
+            const text = header.textContent.trim();
+            const match = text.match(/(\d+)\s+out of\s+(\d+)/i);
+
+            if (match) {
+                const met = parseInt(match[1]);
+                const total = parseInt(match[2]);
+
+                if (text.toLowerCase().includes("must-have")) {
+                    result.mustHaveMatched = met === total;
+                } else if (text.toLowerCase().includes("preferred")) {
+                    result.preferredMatched = met === total;
+                }
+            }
+        });
+
+        result.anyMatched = result.mustHaveMatched || result.preferredMatched;
+    } catch (error) {
+        console.error("Error extracting qualification status:", error);
+    }
+
+    return result;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -265,11 +296,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         });
 
                         // Iterate over each applicant on this page, one by one, and fetch their resume link
+                        // MODIFIED LOOP: Check qualification status before fetching resume
+                        let filteredPageApplicants = [];
                         for (let i = 0; i < pageApplicants.length; i++) {
                             if (stopFetchingFlag) {
                                 showStatus('Applicant extraction stopped by user.', 'warning');
                                 break;
                             }
+
                             // Click the linkElement to open the profile section
                             await new Promise((resolveClick) => {
                                 chrome.scripting.executeScript({
@@ -280,52 +314,68 @@ document.addEventListener('DOMContentLoaded', function() {
                                     },
                                     args: [pageApplicants[i].linkSelector]
                                 }, () => {
-                                    // Wait for the profile section to load after click
                                     setTimeout(resolveClick, 2000);
                                 });
                             });
 
-                            // Extract the resume link from the opened profile section
-                            const resumeLink = await new Promise((resolve) => {
+                            // Extract qualification status from the opened profile section
+                            const qualificationStatus = await new Promise((resolve) => {
                                 chrome.scripting.executeScript({
                                     target: {tabId: currentTab.id},
-                                    func: function() {
-                                        // Try both selectors for resume download
-                                        let resumeDownloadLink = document.querySelector('div.ui-attachment.ui-attachment--doc a.ui-attachment__download-button')?.href;
-                                        if (!resumeDownloadLink) {
-                                            // Try alternate selector
-                                            resumeDownloadLink = document.querySelector('div[class="hiring-resume-viewer__resume-wrapper--collapsed"] a')?.href;
-                                        }
-                                        // Try the "Resume" section in the right column as a fallback
-                                        if (!resumeDownloadLink) {
-                                            const resumeDiv = Array.from(
-                                                document.querySelectorAll('main[class="hiring-applicants__right-column"] div')
-                                            ).find(div =>
-                                                div.querySelector('h2')?.innerText.trim() === 'Resume' &&
-                                                div.querySelector('a[href]')
-                                            );
-                                            resumeDownloadLink = resumeDiv?.querySelector('a')?.href;
-                                        }
-                                        return resumeDownloadLink || null;
-                                    }
+                                    func: extractQualificationStatus
                                 }, function(results) {
                                     if (results && results[0] && results[0].result) {
                                         resolve(results[0].result);
                                     } else {
-                                        resolve(null);
+                                        resolve({ anyMatched: false });
                                     }
                                 });
                             });
 
-                            pageApplicants[i].resumeLink = resumeLink;
-                            // Optionally update UI after each applicant
-                            displayApplicants(applicants.concat(pageApplicants.slice(0, i + 1)));
-                            // Save progress to storage after each applicant
-                            saveApplicantsToStorage(applicants.concat(pageApplicants.slice(0, i + 1)));
+                            if (qualificationStatus && qualificationStatus.anyMatched) {
+                                // Only fetch resume if anyMatched is true
+                                const resumeLink = await new Promise((resolve) => {
+                                    chrome.scripting.executeScript({
+                                        target: {tabId: currentTab.id},
+                                        func: function() {
+                                            let resumeDownloadLink = document.querySelector('div.ui-attachment.ui-attachment--doc a.ui-attachment__download-button')?.href;
+                                            if (!resumeDownloadLink) {
+                                                resumeDownloadLink = document.querySelector('div[class="hiring-resume-viewer__resume-wrapper--collapsed"] a')?.href;
+                                            }
+                                            if (!resumeDownloadLink) {
+                                                const resumeDiv = Array.from(
+                                                    document.querySelectorAll('main[class="hiring-applicants__right-column"] div')
+                                                ).find(div =>
+                                                    div.querySelector('h2')?.innerText.trim() === 'Resume' &&
+                                                    div.querySelector('a[href]')
+                                                );
+                                                resumeDownloadLink = resumeDiv?.querySelector('a')?.href;
+                                            }
+                                            return resumeDownloadLink || null;
+                                        }
+                                    }, function(results) {
+                                        if (results && results[0] && results[0].result) {
+                                            resolve(results[0].result);
+                                        } else {
+                                            resolve(null);
+                                        }
+                                    });
+                                });
+
+                                pageApplicants[i].resumeLink = resumeLink;
+                                filteredPageApplicants.push(pageApplicants[i]);
+                                // Optionally update UI after each applicant
+                                displayApplicants(applicants.concat(filteredPageApplicants));
+                                // Save progress to storage after each applicant
+                                saveApplicantsToStorage(applicants.concat(filteredPageApplicants));
+                            } else {
+                                // Skip this applicant and do not add to filteredPageApplicants
+                                showStatus(`Skipped ${pageApplicants[i].name || 'Unknown'} (did not match qualifications)`, 'warning');
+                            }
                         }
 
-                        // Add page applicants to global applicants array
-                        applicants = applicants.concat(pageApplicants);
+                        // Add filtered page applicants to global applicants array
+                        applicants = applicants.concat(filteredPageApplicants);
                         displayApplicants(applicants); // Update UI with all applicants so far
                         saveApplicantsToStorage(applicants); // Save to storage after each page
 
